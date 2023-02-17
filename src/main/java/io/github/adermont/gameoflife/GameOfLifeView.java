@@ -1,8 +1,9 @@
-package io.github.adermont.livinggame;
+package io.github.adermont.gameoflife;
 
 import javafx.application.Platform;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.concurrent.Task;
+import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -14,16 +15,90 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 
-public class LifeGame extends BorderPane {
+import java.util.Locale;
+import java.util.ResourceBundle;
 
-    private static System.Logger logger = System.getLogger(LifeGame.class.getName());
+/**
+ * Composant JavaFX qui hérite de BorderPane et contient une grille du jeu de la vie.
+ * <p>
+ * Exemple d'utilisation :
+ * <pre>
+ * public class GameOfLifeApp extends Application {
+ *     public static void main(String[] args)
+ *     {
+ *         launch(args);
+ *     }
+ *     public void start(Stage primaryStage)
+ *     {
+ *         GameOfLifeView root = new GameOfLifeView();
+ *         primaryStage.setTitle("Game of life");
+ *         primaryStage.setScene(new Scene(root));
+ *         primaryStage.show();
+ *     }
+ * }
+ * </pre>
+ * </p>
+ * Evolutions futures :
+ * <ul>
+ *     <li>Ajouter un slider pour moduler la vitesse de l'animation</li>
+ *     <li>Sauvegarder l'état initial avant de lancer la simulation</li>
+ *     <li>Charger un état initial à partir d'une sauvegarde d'une simulation précédente</li>
+ *     <li>Charger une liste d'états initiaux intéressants dans une ComboBox</li>
+ * </ul>
+ * Bugs connus :
+ * <ul>
+ *     <li>Parfois un ou plusieurs pixels restent en noir même après un clear...</li>
+ * </ul>
+ */
+public class GameOfLifeView extends BorderPane
+{
+    /** Taille par défaut d'une cellule (en pixels)). */
+    public static final int DEFAULT_CELL_SIZE = 16;
 
-    public static final int NB_CASES_GRILLE = 20;
-    public static final int DEFAULT_CELL_SIZE = 24;
-    public static final int FRAME_DURATION = 300;
+    /** Nombre de cases par défaut sur la grille. */
+    public static final int NB_CASES_GRILLE = 40;
+
+    /** Durée par défaut d'un tour du jeu (en millisecondes). */
+    public static final int FRAME_DURATION = 100;
+
+    // ---------------------------------------------------------------
+
+    private static final String BUTTON_START_LABEL_KEY = "button.start.label";
+    private static final String BUTTON_STOP_LABEL_KEY  = "button.stop.label";
+    private static final String BUTTON_CLEAR_LABEL_KEY = "button.clear.label";
+
+    // ---------------------------------------------------------------
+
+    // Le logger pour tracer les informations de débogage.
+    private static final System.Logger logger = System.getLogger(GameOfLifeView.class.getName());
 
     // Nombre de générations de la simulation courante.
-    private SimpleIntegerProperty mNbGenerations;
+    private final SimpleIntegerProperty mNbGenerations;
+    /**
+     * Les renderers servent à afficher les cellules du modèle de données. On ne définit pas quel
+     * est leur type, on garde le type générique "Node" comme ça on choisira plus tard de modifier
+     * les composants graphiques qui servent à afficher une cellule.
+     */
+    private final Node[][]              mRenderers;
+
+    /** Le bouton start permet de lancer la simulation. */
+    private final Button mButtonStart;
+
+    /** Le bouton stop arrête la simulation. */
+    private final Button mButtonStop;
+
+    /** Le bouton clear permet d'effacer toutes les cellules du plateau de jeu. */
+    private final Button mButtonClear;
+
+    // Composants graphiques de la vue -----------------------------------
+    /** La grille contenant les "renderers" qui affichent les cellules. */
+    private final GridPane mGridPane;
+
+    /**
+     * Le texte en rouge en haut à gauche affiche le nombre de tours du jeu, c'est à dire le nombre
+     * de générations de cellules après la première génération initiale.
+     */
+    private final Label mLabelGeneration;
 
     // Numéro de la génération où apparait une cellule.
     private int mNumGenerationEtatStable;
@@ -32,48 +107,48 @@ public class LifeGame extends BorderPane {
     private Task<Void> mComputeNewGenerationTask;
 
     // Modèle d'une grille de cellules vivantes.
-    private LifeGameModel mModel;
+    private GameOfLifeModel mModel;
 
     // Le modèle de la génération précédente.
-    private LifeGameModel mPreviousModel;
+    private GameOfLifeModel mPreviousModel;
 
-    // Composants de la vue
-    private Node[][] mRenderers;
-    private Button mButtonStart;
-    private Button mButtonStop;
-    private Button mButtonClear;
-    private GridPane mGridPane;
-    private Label mLabelGeneration;
-
-    // Préférences de la vue
-    private int mGridCellSizeInPixels;
+    // --------------------------------------------------------------------
+    // Préférences d'affichage'
+    private int  mGridCellSizeInPixels;
     private long mFrameDuration;
+    // --------------------------------------------------------------------
+
+    // Le "bundle" qui contient les labels des boutons et autres trucs qui doivent être traduits.
+    private ResourceBundle labelsBundle;
 
     /**
-     * Constructeur par défaut. La taille des cellules sur la grille est par défaut
-     * de {@link #DEFAULT_CELL_SIZE} pixels.
+     * Constructeur par défaut. La taille des cellules sur la grille est par défaut de
+     * {@link #DEFAULT_CELL_SIZE} pixels.
      */
-    public LifeGame()
+    public GameOfLifeView()
     {
         this(DEFAULT_CELL_SIZE);
+        reloadBundle();
     }
 
     /**
      * Crée un nouveau jeu de la vie.
+     *
      * @param gridCellSize Taille d'une cellule de la grille (en pixels).
      */
-    public LifeGame(int gridCellSize)
+    public GameOfLifeView(int gridCellSize)
     {
-        mModel = new LifeGameModel(NB_CASES_GRILLE);
+        reloadBundle();
+        mModel = new GameOfLifeModel(NB_CASES_GRILLE);
         mPreviousModel = null;
         mNbGenerations = new SimpleIntegerProperty();
         mRenderers = new Node[NB_CASES_GRILLE][NB_CASES_GRILLE];
         mGridCellSizeInPixels = gridCellSize;
         mFrameDuration = FRAME_DURATION;
 
-        mButtonStart = new Button("Start");
-        mButtonStop = new Button("Stop");
-        mButtonClear = new Button("Clear");
+        mButtonStart = new Button(labelsBundle.getString(BUTTON_START_LABEL_KEY));
+        mButtonStop = new Button(labelsBundle.getString(BUTTON_STOP_LABEL_KEY));
+        mButtonClear = new Button(labelsBundle.getString(BUTTON_CLEAR_LABEL_KEY));
         mGridPane = new GridPane();
         mLabelGeneration = new Label();
 
@@ -83,11 +158,12 @@ public class LifeGame extends BorderPane {
         mLabelGeneration.textProperty().bind(mNbGenerations.asString());
 
         mGridPane.setStyle("-fx-background-color: rgba(0,0,0,0)");
-        mGridPane.setPadding(new Insets(10, 10, 10, 10));
+        mGridPane.setPadding(new Insets(10));
         mGridPane.setGridLinesVisible(true);
         mGridPane.setOnMousePressed(e -> handleGridClick(e));
         mGridPane.setOnMouseDragged(e -> {
-            if (e.isPrimaryButtonDown()) {
+            if (e.isPrimaryButtonDown())
+            {
                 Platform.runLater(() -> handleGridClick(e));
             }
         });
@@ -95,7 +171,7 @@ public class LifeGame extends BorderPane {
         mLabelGeneration.setAlignment(Pos.TOP_LEFT);
         mLabelGeneration.setPadding(new Insets(20));
         mLabelGeneration.setFont(Font.font("Arial", FontWeight.EXTRA_BOLD, 50));
-        mLabelGeneration.setTextFill(Color.BLACK.deriveColor(1, 1, 1, 0.7));
+        mLabelGeneration.setTextFill(Color.INDIANRED.deriveColor(1, 1, 1, 0.7));
 
         StackPane stackPane = new StackPane(mLabelGeneration, mGridPane);
         StackPane.setAlignment(mLabelGeneration, Pos.TOP_LEFT);
@@ -121,12 +197,23 @@ public class LifeGame extends BorderPane {
     }
 
     /**
+     * Charge (ou recharge) le fichier de ressources qui contient les labels.
+     */
+    private void reloadBundle()
+    {
+        ResourceBundle.clearCache();
+        labelsBundle = ResourceBundle.getBundle(getClass().getName(), Locale.getDefault());
+    }
+
+    /**
      * Création des HBox qui servent à faire le rendu des cases du modèle.
      */
     private void createRenderers()
     {
-        for (int iRow = 0; iRow < mModel.getRowCount(); iRow++) {
-            for (int iCol = 0; iCol < mModel.getColumnCount(); iCol++) {
+        for (int iRow = 0; iRow < mModel.getRowCount(); iRow++)
+        {
+            for (int iCol = 0; iCol < mModel.getColumnCount(); iCol++)
+            {
                 int size = getGridCellSizeInPixels();
                 HBox box = new HBox();
                 box.setMinSize(size, size);
@@ -148,9 +235,12 @@ public class LifeGame extends BorderPane {
     private void bindCellRendererToModel(int iRow, int iCol, Node node)
     {
         mModel.addListener(iRow, iCol, (source, oldValue, newValue) -> {
-            if (newValue) {
-                node.setStyle("-fx-background-color: rgba(0,0,0,0.5)");
-            } else {
+            if (newValue)
+            {
+                node.setStyle("-fx-background-color: rgba(0,0,50,0.5)");
+            }
+            else
+            {
                 node.setStyle("-fx-background-color: rgba(255,255,255,0.1)");
             }
         });
@@ -172,11 +262,13 @@ public class LifeGame extends BorderPane {
      */
     public void rearmComputeGenerationTask()
     {
-        mComputeNewGenerationTask = new Task<Void>() {
+        mComputeNewGenerationTask = new Task<Void>()
+        {
             @Override
             protected Void call() throws Exception
             {
-                while (!isCancelled()) {
+                while (!isCancelled())
+                {
                     // Calcule une nouvelle génération de cellules
                     computeNewGeneration();
 
@@ -186,16 +278,16 @@ public class LifeGame extends BorderPane {
                 return null;
             }
         };
-        mComputeNewGenerationTask.setOnSucceeded(e -> {
-            Platform.runLater(() -> {
-                mButtonStart.setDisable(false);
-            });
+        EventHandler handler = e -> Platform.runLater(() -> {
+            mButtonStart.setDisable(false);
         });
+        mComputeNewGenerationTask.setOnCancelled(handler);
+        mComputeNewGenerationTask.setOnSucceeded(handler);
     }
 
     /**
-     * Gestionnaire d'évènement pour le clic souris sur la grille.
-     * On crée une nouvelle cellule vivante sur la case cliquée.
+     * Gestionnaire d'évènement pour le clic souris sur la grille. On crée une nouvelle cellule
+     * vivante sur la case cliquée.
      *
      * @param e
      */
@@ -225,7 +317,8 @@ public class LifeGame extends BorderPane {
 
     public void handleStop()
     {
-        if (mComputeNewGenerationTask != null) {
+        if (mComputeNewGenerationTask != null)
+        {
             mComputeNewGenerationTask.cancel();
         }
         mButtonStart.setDisable(false);
@@ -239,11 +332,13 @@ public class LifeGame extends BorderPane {
         Platform.runLater(() -> mNbGenerations.set(mNbGenerations.get() + 1));
 
         logger.log(System.Logger.Level.DEBUG, "Computing generation {0}...", mNbGenerations);
-        LifeGameModel ancienModel = mModel;
-        mModel = new LifeGameModel(mModel);
+        GameOfLifeModel ancienModel = mModel;
+        mModel = new GameOfLifeModel(mModel);
 
-        for (int iRow = 0; iRow < mModel.getRowCount(); iRow++) {
-            for (int iCol = 0; iCol < mModel.getColumnCount(); iCol++) {
+        for (int iRow = 0; iRow < mModel.getRowCount(); iRow++)
+        {
+            for (int iCol = 0; iCol < mModel.getColumnCount(); iCol++)
+            {
 
                 // Binding model->renderer
                 bindCellRendererToModel(iRow, iCol, mRenderers[iRow][iCol]);
@@ -257,10 +352,12 @@ public class LifeGame extends BorderPane {
                 //        ALORS:  mort
                 //  - SI (pas de cellule vivante mais 3 cellules vivantes autour)
                 //        ALORS: naissance
-                if (ancienModel.get(iRow, iCol) && (nbCellulesVivantes > 3 || nbCellulesVivantes < 2)) {
+                if (ancienModel.get(iRow, iCol) && (nbCellulesVivantes > 3 || nbCellulesVivantes < 2))
+                {
                     destroyCell(iRow, iCol);
                 }
-                if (!ancienModel.get(iRow, iCol) && nbCellulesVivantes == 3) {
+                if (!ancienModel.get(iRow, iCol) && nbCellulesVivantes == 3)
+                {
                     createNewCell(iRow, iCol);
                 }
             }
@@ -268,7 +365,8 @@ public class LifeGame extends BorderPane {
 
         // Ici on fait une petite vérification par rapport à l'état précédent pour savoir
         // s'il y a eu des modifications. Sinon on s'arrête car l'état est stable.
-        if (mNumGenerationEtatStable == 0 && mModel.equals(ancienModel)) {
+        if (mNumGenerationEtatStable == 0 && mModel.equals(ancienModel))
+        {
             mNumGenerationEtatStable = mNbGenerations.get();
             mComputeNewGenerationTask.cancel();
             logger.log(System.Logger.Level.INFO, "STABILISATION at generation {0}", mNumGenerationEtatStable);
@@ -276,13 +374,13 @@ public class LifeGame extends BorderPane {
 
         // Ici on vérifie s'il y a des oscillateurs de période 2 (ie. quand l'état revient
         // systématiquement à l'état N-2).
-        if (mNumGenerationEtatStable == 0 && mModel.equals(mPreviousModel)) {
+        if (mNumGenerationEtatStable == 0 && mModel.equals(mPreviousModel))
+        {
             mNumGenerationEtatStable = mNbGenerations.get();
             logger.log(System.Logger.Level.INFO, "OSCILLATION detected at generation {0}", mNumGenerationEtatStable);
         }
         mPreviousModel = ancienModel;
     }
-
 
     /**
      * Naissance d'une cellule à la case (pRow,pCol).
